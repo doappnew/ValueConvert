@@ -12,9 +12,24 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
+      # Sans ceci, npm ci n'installe pas vite/typescript (NODE_ENV=production) et le build échoue.
+      - key: NPM_CONFIG_INCLUDE
+        value: dev
       - key: APP_ENV
         value: testnet
       - key: PI_VALIDATION_KEY
         sync: false
       - key: COINGECKO_API_KEY
+        sync: false
+      - key: PI_SANDBOX
+        value: "0"
+      - key: PI_VALUE_AVAILABLE
+        value: "0"
+      - key: TESTNET_PAYOUT
+        value: "0"
+      - key: TESTNET_RECEIVE
+        value: "0"
+      - key: PI_API_KEY
+        sync: false
+      - key: PI_WALLET_SEED
         sync: false

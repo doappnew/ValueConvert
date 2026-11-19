@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { IconChevron, IconCopy, IconRefresh, IconSwap, IconWarning } from "../components/Icons";
+import { ReceiveTest, useTestStatus } from "../components/TestnetTests";
 import { InfoPanel } from "../components/InfoPanel";
 import { useConversion } from "../hooks/useConversion";
 import { useNow } from "../hooks/useMisc";
 import type { ApiError } from "../lib/api";
 import { AMOUNT_MESSAGES, displayResult, formatDecimal, formatWhen, normalizeAmountInput, resultUnit } from "../lib/format";
-import type { ConvertParams, ConvertResponse, Currency, Direction, Mode } from "../types";
+import type { ConvertParams, ConvertResponse, Currency, Direction } from "../types";
 
 interface Props {
-  mode: Mode;
+  /** false tant que la valeur du Pi n'est pas disponible : aucun calcul, aucune requête de prix. */
+  piValueAvailable: boolean;
   amount: string;
   onAmount: (v: string) => void;
   direction: Direction;
@@ -16,28 +18,23 @@ interface Props {
   currency: string;
   currencies: Currency[];
   onPickCurrency: () => void;
-  gcvRef: string;
-  gcvDefault: string;
   online: boolean;
-  onUseGcv: () => void;
 }
 
 interface BannerSpec {
   title: string;
   text: string;
   retry?: boolean;
-  gcv?: boolean;
   pick?: boolean;
 }
 
-function bannerFor(error: ApiError, mode: Mode): BannerSpec {
+function bannerFor(error: ApiError): BannerSpec {
   switch (error.code) {
     case "PRICE_UNAVAILABLE":
       return {
         title: "Prix du Pi indisponible",
         text: "La source de prix ne répond pas pour le moment. Aucun résultat n'est affiché afin de ne pas présenter un prix inventé ou périmé comme un prix de marché actuel.",
         retry: true,
-        gcv: mode === "market",
       };
     case "RATES_UNAVAILABLE":
       return {
@@ -82,29 +79,19 @@ async function copyText(text: string): Promise<boolean> {
 
 function copyLabel(d: ConvertResponse): string {
   const from = d.direction === "pi_to_fiat" ? "Pi" : d.currency.code;
-  const origin =
-    d.kind === "gcv_reference"
-      ? "référence GCV hypothétique"
-      : `estimation de marché, source ${d.sources.price?.name ?? "—"}`;
+  const origin = `estimation de marché, source ${d.sources.price?.name ?? "—"}`;
   const stale = d.dataState === "stale" ? ", données périmées" : "";
   return `${formatDecimal(d.amount)} ${from} ≈ ${displayResult(d)} ${resultUnit(d)} — ValueConvert (${origin}${stale})`;
 }
 
 export function ConverterPage(p: Props) {
   const now = useNow();
+  const tests = useTestStatus();
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   const amount = useMemo(() => normalizeAmountInput(p.amount), [p.amount]);
-  const gcv = p.mode === "gcv";
 
-  const params: ConvertParams | null = amount.value
-    ? {
-        mode: p.mode,
-        direction: p.direction,
-        amount: amount.value,
-        currency: p.currency,
-        ...(gcv ? { gcvReference: p.gcvRef } : {}),
-      }
-    : null;
+  const params: ConvertParams | null =
+    amount.value && p.piValueAvailable ? { direction: p.direction, amount: amount.value, currency: p.currency } : null;
 
   const { state, refresh } = useConversion(params);
   const data = state.status === "ok" || state.status === "loading" ? (state.data ?? null) : null;
@@ -119,7 +106,7 @@ export function ConverterPage(p: Props) {
         text: "Reconnectez-vous pour obtenir des prix à jour. Aucun résultat n'est affiché sans données.",
       }
     : error
-      ? bannerFor(error, p.mode)
+      ? bannerFor(error)
       : null;
 
   async function onCopy() {
@@ -141,18 +128,15 @@ export function ConverterPage(p: Props) {
     </span>
   );
 
-  const resultText = data && !error && p.online ? displayResult(data) : "—";
-  const showResult = resultText !== "—";
+  const resultText = !p.piValueAvailable ? "À venir" : data && !error && p.online ? displayResult(data) : "—";
+  const showResult = resultText !== "—" && p.piValueAvailable;
 
   return (
     <>
-      {gcv && (
-        <section className="notice gcv-notice" aria-label="Avertissement GCV">
-          <strong>Référence GCV communautaire — 1 Pi = {formatDecimal(p.gcvRef)} USD</strong>
-          <span>
-            Cette référence n'est ni un prix officiel garanti par Pi Network, ni une cotation de marché. Elle diffère de
-            la valeur de marché du Pi.
-          </span>
+      {!p.piValueAvailable && (
+        <section className="notice soon-notice" role="status">
+          <strong>La valeur du Pi est à venir</strong>
+          <span>Elle n'est pas encore disponible. Dès qu'elle le sera, la conversion s'affichera ici.</span>
         </section>
       )}
 
@@ -167,11 +151,6 @@ export function ConverterPage(p: Props) {
             {banner.retry && p.online && (
               <button type="button" className="btn small" onClick={refresh}>
                 Réessayer
-              </button>
-            )}
-            {banner.gcv && (
-              <button type="button" className="btn small ghost" onClick={p.onUseGcv}>
-                Voir le mode GCV (hypothétique)
               </button>
             )}
             {banner.pick && (
@@ -234,17 +213,17 @@ export function ConverterPage(p: Props) {
 
         <div className="field">
           <span className="label" id="res-label">
-            {gcv ? "Équivaut à (valeur hypothétique GCV)" : "Vous obtenez (estimation)"}
+            {p.piValueAvailable ? "Vous obtenez (estimation)" : "Valeur du Pi"}
             {data?.dataState === "stale" && showResult ? " — données périmées" : ""}
           </span>
           <div className="row gap-s">
             <output
-              className={`big-result ${gcv ? "gcv" : ""} ${loading && !showResult ? "skeleton" : ""} ${loading && showResult ? "dim" : ""} ${showResult ? "" : "empty"}`}
+              className={`big-result ${loading && !showResult ? "skeleton" : ""} ${loading && showResult ? "dim" : ""} ${showResult ? "" : "empty"} ${p.piValueAvailable ? "" : "soon"}`}
               aria-labelledby="res-label"
               aria-live="polite"
               aria-busy={loading}
             >
-              {loading && !showResult ? "…" : resultText}
+              {p.piValueAvailable && loading && !showResult ? "…" : resultText}
             </output>
             {piFirst ? chipCurrency : chipPi}
           </div>
@@ -252,7 +231,7 @@ export function ConverterPage(p: Props) {
         </div>
       </section>
 
-      {data && !error && p.online && <InfoPanel data={data} now={now} />}
+      {p.piValueAvailable && data && !error && p.online && <InfoPanel data={data} now={now} />}
 
       <div className="actions">
         <button type="button" className="btn grow" onClick={onCopy} disabled={state.status !== "ok"}>
@@ -262,16 +241,18 @@ export function ConverterPage(p: Props) {
         <button type="button" className="btn ghost" onClick={() => p.onAmount("")}>
           Effacer
         </button>
-        <button type="button" className="btn ghost icon" onClick={refresh} aria-label="Actualiser les prix" disabled={!params}>
+        <button type="button" className="btn ghost icon" onClick={refresh} aria-label="Actualiser les prix" disabled={!params || !p.piValueAvailable}>
           <IconRefresh />
         </button>
       </div>
 
+      <ReceiveTest status={tests} />
+
       <p className="legal">
-        {data?.disclaimer ??
-          (gcv
-            ? "Référence GCV communautaire hypothétique : ce n'est ni un prix officiel garanti par Pi Network ni une cotation de marché."
-            : "Estimation indicative basée sur des cotations externes ; ce n'est ni un prix garanti ni une conversion exécutable.")}
+        {p.piValueAvailable
+          ? (data?.disclaimer ??
+            "Estimation indicative basée sur des cotations externes ; ce n'est ni un prix garanti ni une conversion exécutable.")
+          : "La valeur du Pi n'est pas encore disponible. Aucune estimation n'est affichée."}
       </p>
     </>
   );

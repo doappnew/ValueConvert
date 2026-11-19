@@ -25,11 +25,6 @@ export const IconMarket = () => (
     <path d="M15 6h5v5" />
   </Svg>
 );
-export const IconGcv = () => (
-  <Svg>
-    <path d="M12 3l8 9-8 9-8-9z" />
-  </Svg>
-);
 export const IconGlobe = () => (
   <Svg>
     <circle cx="12" cy="12" r="9" />

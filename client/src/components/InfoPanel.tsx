@@ -19,12 +19,11 @@ function SourceRow({ label, info, now }: { label: string; info: SourceInfo; now:
 
 export function InfoPanel({ data, now }: { data: ConvertResponse; now: number }) {
   const usd = data.currency.code === "USD";
-  const gcv = data.kind === "gcv_reference";
   return (
     <section className="card info" aria-label="Détails du calcul">
       <dl>
         <div className="info-row">
-          <dt>{gcv ? "Référence GCV utilisée" : "Prix du Pi utilisé"}</dt>
+          <dt>Prix du Pi utilisé</dt>
           <dd>
             <strong>1 Pi = {formatDecimal(data.priceUsd)} USD</strong>
             {!usd && (
@@ -32,7 +31,6 @@ export function InfoPanel({ data, now }: { data: ConvertResponse; now: number })
                 soit {formatDecimal(data.unitPriceFiat, { minFraction: data.currency.decimals })} {data.currency.code}
               </span>
             )}
-            {gcv && <span className="sub warn-text">Hypothétique, pas un prix de marché</span>}
           </dd>
         </div>
         {!usd && (

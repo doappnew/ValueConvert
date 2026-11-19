@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Route } from "../types";
 import { readPref, writePref } from "../lib/storage";
 
-const ROUTES: Route[] = ["marche", "gcv", "devises", "reglages"];
+const ROUTES: Route[] = ["marche", "devises", "reglages"];
 
 function parseHash(): Route {
   const h = window.location.hash.replace(/^#\/?/, "");

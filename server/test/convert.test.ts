@@ -3,7 +3,6 @@ import {
   DecimalCtor as D,
   fiatToPi,
   parseAmount,
-  parseReference,
   piToFiat,
   roundForCurrency,
   roundForPi,
@@ -40,18 +39,6 @@ describe("parseAmount", () => {
   });
 });
 
-describe("parseReference", () => {
-  it("accepte la référence GCV par défaut et des valeurs décimales", () => {
-    expect(parseReference("314159").toString()).toBe("314159");
-    expect(parseReference("0.5").toString()).toBe("0.5");
-  });
-  it("refuse zéro, négatif, texte et hors limites", () => {
-    for (const v of ["0", "-1", "abc", "", "0.0000001", "10000000000000"]) {
-      expect(() => parseReference(v)).toThrow(AppError);
-    }
-  });
-});
-
 describe("conversions", () => {
   const price = new D("0.2"); // exemple de test
   const rate = new D("600");
@@ -77,9 +64,6 @@ describe("conversions", () => {
     expect(v.toFixed()).toBe("0.3");
   });
 
-  it("GCV : 100 Pi × 314159 = 31 415 900 USD", () => {
-    expect(piToFiat(new D("100"), new D("314159"), new D("1")).toFixed()).toBe("31415900");
-  });
 });
 
 describe("arrondis par devise", () => {

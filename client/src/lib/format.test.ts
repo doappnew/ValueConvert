@@ -50,7 +50,6 @@ describe("normalizeAmountInput", () => {
 });
 
 const base: ConvertResponse = {
-  mode: "market",
   direction: "pi_to_fiat",
   amount: "100",
   currency: { code: "XOF", name: "Franc CFA (BCEAO)", decimals: 0 },
@@ -59,10 +58,8 @@ const base: ConvertResponse = {
   priceUsd: "0.2",
   usdToFiat: "600",
   unitPriceFiat: "120.00",
-  gcvReferenceUsd: null,
   sources: { price: null, fx: null },
   dataState: "live",
-  kind: "market_estimate",
   disclaimer: "",
 };
 

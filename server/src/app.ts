@@ -8,21 +8,22 @@ import { z } from "zod";
 import type { Config } from "./config.js";
 import { AppError } from "./errors.js";
 import { CURRENCIES } from "./currencies.js";
-import { DEFAULT_GCV_REFERENCE_USD } from "./convert.js";
 import type { MarketService } from "./market.js";
+import { createTestnetRouter, makePiBackendA2u, TestStore, type A2uClient } from "./testnet.js";
 
 export interface AppDeps {
   config: Config;
   market: MarketService;
   fetchFn?: typeof fetch;
+  /** Pour les tests : remplace pi-backend et le stockage des tests Testnet. */
+  makeA2u?: (apiKey: string, seed: string) => Promise<A2uClient>;
+  testStore?: TestStore;
 }
 
 const convertQuery = z.object({
-  mode: z.enum(["market", "gcv"], { errorMap: () => ({ message: "Mode invalide (market ou gcv)." }) }),
   direction: z.enum(["pi_to_fiat", "fiat_to_pi"], { errorMap: () => ({ message: "Sens de conversion invalide." }) }),
   amount: z.string({ required_error: "Montant requis." }).max(40),
   currency: z.string({ required_error: "Devise requise." }).regex(/^[A-Za-z]{3}$/, "Code de devise invalide."),
-  gcvReference: z.string().max(40).optional(),
 });
 
 const piVerifyBody = z.object({ accessToken: z.string().min(10).max(4096) });
@@ -32,7 +33,7 @@ function firstIssue(e: z.ZodError): string {
   return e.issues[0]?.message ?? "Requête invalide.";
 }
 
-export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
+export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBackendA2u, testStore }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", config.TRUST_PROXY);
@@ -45,7 +46,7 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'", "https://sdk.minepi.com"],
-          styleSrc: ["'self'", "https://fonts.googleapis.com"],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           fontSrc: ["'self'", "https://fonts.gstatic.com"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'", "https://*.minepi.com"],
@@ -93,7 +94,7 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
   });
 
   api.get("/config", (_req, res) => {
-    res.json({ appName: "ValueConvert", env: config.APP_ENV, gcvDefaultUsd: DEFAULT_GCV_REFERENCE_USD });
+    res.json({ appName: "ValueConvert", env: config.APP_ENV, piValueAvailable: config.PI_VALUE_AVAILABLE === "1", piSandbox: config.PI_SANDBOX === "1" });
   });
 
   api.get("/currencies", (_req, res) => {
@@ -102,7 +103,7 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
 
   api.get("/status", async (_req, res, next) => {
     try {
-      res.json(await market.status());
+      res.json(await market.status({ withPrice: config.PI_VALUE_AVAILABLE === "1" }));
     } catch (e) {
       next(e);
     }
@@ -112,13 +113,16 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
     try {
       const q = convertQuery.safeParse(req.query);
       if (!q.success) throw new AppError("INVALID_INPUT", firstIssue(q.error), 400);
+      if (config.PI_VALUE_AVAILABLE !== "1") {
+        // Valeur du Pi pas encore disponible : aucun calcul, aucun prix, aucune source interrogée.
+        res.json({ available: false, message: "La valeur du Pi est à venir : elle n'est pas encore disponible." });
+        return;
+      }
       res.json(
         await market.convert({
-          mode: q.data.mode,
           direction: q.data.direction,
           amount: q.data.amount,
           currency: q.data.currency,
-          gcvReferenceUsd: q.data.gcvReference,
         }),
       );
     } catch (e) {
@@ -141,19 +145,30 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
           signal: AbortSignal.timeout(8000),
         });
       } catch {
+        console.warn("[auth] API Pi /v2/me injoignable");
         throw new AppError("UPSTREAM_ERROR", "Vérification Pi impossible pour le moment.", 502);
       }
       if (r.status === 401 || r.status === 403) {
+        console.warn(`[auth] API Pi /v2/me ${r.status} : jeton refusé`);
         throw new AppError("UNAUTHORIZED", "Jeton Pi refusé.", 401);
       }
-      if (!r.ok) throw new AppError("UPSTREAM_ERROR", "Vérification Pi impossible pour le moment.", 502);
+      if (!r.ok) {
+        console.warn(`[auth] API Pi /v2/me ${r.status}`);
+        throw new AppError("UPSTREAM_ERROR", "Vérification Pi impossible pour le moment.", 502);
+      }
       const me = piMeSchema.safeParse(await r.json().catch(() => null));
       if (!me.success) throw new AppError("UPSTREAM_ERROR", "Réponse Pi inattendue.", 502);
+      console.log("[auth] connexion vérifiée");
       res.json({ username: me.data.username ?? null });
     } catch (e) {
       next(e);
     }
   });
+
+  api.use(
+    "/test",
+    createTestnetRouter({ config, fetchFn, makeA2u, limiter: strictLimiter, store: testStore ?? new TestStore(config.TEST_STATE_FILE) }),
+  );
 
   api.use((_req, _res, next) => next(new AppError("NOT_FOUND", "Route introuvable.", 404)));
   app.use("/api", api);
@@ -174,6 +189,7 @@ export function createApp({ config, market, fetchFn = fetch }: AppDeps) {
     app.use(
       express.static(dist, {
         index: false,
+        extensions: ["html"], // /confidentialite et /conditions → pages statiques
         setHeaders: (res, file) => {
           res.setHeader(
             "Cache-Control",

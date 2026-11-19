@@ -1,10 +1,8 @@
-import { useState } from "react";
-import { ReferenceEditor } from "../components/ReferenceEditor";
 import { StateChip } from "../components/StatusPill";
 import { useNow } from "../hooks/useMisc";
-import { ApiError, api } from "../lib/api";
+import type { ApiError } from "../lib/api";
 import { formatWhen } from "../lib/format";
-import { isPiBrowser, piAuthenticate } from "../lib/pi";
+import { BUILD_ID, SendTest, useTestStatus } from "../components/TestnetTests";
 import type { AppConfig, SourceInfo, StatusResponse } from "../types";
 
 interface Props {
@@ -13,9 +11,8 @@ interface Props {
   statusError: ApiError | null;
   statusLoading: boolean;
   onRefreshStatus: () => void;
-  gcvRef: string;
-  gcvDefault: string;
-  onGcvRef: (v: string) => void;
+  user: string | null;
+  onLogout: () => void;
 }
 
 function SourceCard({ title, info, now }: { title: string; info: SourceInfo; now: number }) {
@@ -40,31 +37,10 @@ function SourceCard({ title, info, now }: { title: string; info: SourceInfo; now
   );
 }
 
-type PiState = { s: "idle" } | { s: "busy" } | { s: "ok"; username: string | null } | { s: "error"; message: string };
-
 export function SettingsPage(p: Props) {
   const now = useNow();
-  const [pi, setPi] = useState<PiState>({ s: "idle" });
-  const inPi = isPiBrowser();
-
-  async function login() {
-    setPi({ s: "busy" });
-    try {
-      const token = await piAuthenticate();
-      const r = await api.piVerify(token); // le serveur vérifie le jeton auprès de la Platform API
-      setPi({ s: "ok", username: r.username });
-    } catch (e) {
-      const message =
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error && e.message === "PI_UNAVAILABLE"
-            ? "Le SDK Pi n'est pas disponible. Ouvrez ValueConvert dans Pi Browser."
-            : "Connexion Pi annulée ou impossible.";
-      setPi({ s: "error", message });
-    }
-  }
-
   const testnet = p.config?.env === "testnet";
+  const tests = useTestStatus();
 
   return (
     <>
@@ -91,44 +67,36 @@ export function SettingsPage(p: Props) {
         </div>
         {p.status ? (
           <dl>
-            <SourceCard title="Prix du Pi" info={p.status.price} now={now} />
+            {p.status.price ? (
+              <SourceCard title="Prix du Pi" info={p.status.price} now={now} />
+            ) : (
+              <div className="info-row">
+                <dt>Prix du Pi</dt>
+                <dd>
+                  <strong>À venir</strong>
+                  <span className="sub">Pas encore disponible</span>
+                </dd>
+              </div>
+            )}
             <SourceCard title="Taux de change" info={p.status.fx} now={now} />
           </dl>
         ) : (
           <p className="hint error">{p.statusError?.message ?? "État des sources en cours de chargement…"}</p>
         )}
         <p className="hint">
-          Les prix et taux sont récupérés par le serveur, mis en cache brièvement, puis actualisés automatiquement.
-          Aucune valeur n'est inventée : sans donnée valide, aucun résultat de marché n'est affiché.
+          Aucune valeur n'est inventée : tant que la valeur du Pi n'est pas disponible, elle est indiquée « à venir ».
         </p>
       </section>
-
-      <ReferenceEditor value={p.gcvRef} defaultValue={p.gcvDefault} onChange={p.onGcvRef} />
 
       <section className="card">
-        <h2>Compte Pi (facultatif)</h2>
-        <p className="hint">
-          Le calculateur fonctionne sans connexion. La connexion Pi n'est qu'un test d'intégration : seul le nom
-          d'utilisateur est demandé, jamais de phrase secrète, de clé privée, d'e-mail ni de téléphone.
-        </p>
-        {inPi ? (
-          <button type="button" className="btn" onClick={() => void login()} disabled={pi.s === "busy"}>
-            {pi.s === "busy" ? "Connexion…" : "Se connecter avec Pi"}
-          </button>
-        ) : (
-          <p className="hint">Disponible uniquement dans Pi Browser.</p>
-        )}
-        {pi.s === "ok" && (
-          <p className="notice ok-notice" role="status">
-            Connecté{pi.username ? ` en tant que ${pi.username}` : ""} (identité vérifiée par le serveur).
-          </p>
-        )}
-        {pi.s === "error" && (
-          <p className="notice error-notice" role="alert">
-            {pi.message}
-          </p>
-        )}
+        <h2>Compte</h2>
+        <p className="hint">{p.user ? `Connecté en tant que ${p.user}.` : "Non connecté."}</p>
+        <button type="button" className="btn ghost" onClick={p.onLogout}>
+          Se déconnecter
+        </button>
       </section>
+
+      <SendTest status={tests} />
 
       <section className="card">
         <h2>À propos</h2>
@@ -141,7 +109,10 @@ export function SettingsPage(p: Props) {
           Application indépendante, non affiliée à Pi Network et non approuvée par Pi Network. Pi Network is a trademark
           of PI Community Company.
         </p>
-        <p className="hint">Version 1.0.0</p>
+        <p className="hint">
+          <a href="/confidentialite">Politique de confidentialité</a> · <a href="/conditions">Conditions d'utilisation</a>
+        </p>
+        <p className="hint">Version {BUILD_ID}</p>
       </section>
     </>
   );

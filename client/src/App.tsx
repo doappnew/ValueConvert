@@ -1,28 +1,28 @@
 import { useRef, useState } from "react";
 import { Brand } from "./components/Brand";
-import { IconBack, IconGcv, IconGlobe, IconMarket, IconSettings } from "./components/Icons";
+import { IconBack, IconGlobe, IconMarket, IconSettings } from "./components/Icons";
 import { StatusPill, healthOf } from "./components/StatusPill";
+import { useAuth } from "./hooks/useAuth";
 import { useConfig, useCurrencies, useStatus } from "./hooks/useApiData";
 import { useHashRoute, useOnline, usePersisted } from "./hooks/useMisc";
 import { ConverterPage } from "./pages/ConverterPage";
 import { CurrenciesPage } from "./pages/CurrenciesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { WelcomePage } from "./pages/WelcomePage";
 import type { Direction, Route } from "./types";
-
-const GCV_DEFAULT_FALLBACK = "314159";
 
 const isCurrencyCode = (v: string): v is string => /^[A-Z]{3}$/.test(v);
 const isDirection = (v: string): v is Direction => v === "pi_to_fiat" || v === "fiat_to_pi";
-const isReference = (v: string): v is string => /^\d{1,13}(\.\d{1,8})?$/.test(v);
 
 const NAV: { route: Route; label: string; icon: JSX.Element }[] = [
-  { route: "marche", label: "Marché", icon: <IconMarket /> },
-  { route: "gcv", label: "GCV", icon: <IconGcv /> },
+  { route: "marche", label: "Convertir", icon: <IconMarket /> },
   { route: "devises", label: "Devises", icon: <IconGlobe /> },
   { route: "reglages", label: "Réglages", icon: <IconSettings /> },
 ];
 
+
 export default function App() {
+  const auth = useAuth();
   const [route, navigate] = useHashRoute();
   const config = useConfig();
   const { currencies, error: currenciesError, retry: retryCurrencies } = useCurrencies();
@@ -31,18 +31,23 @@ export default function App() {
 
   const [currency, setCurrency] = usePersisted("currency", "XOF", isCurrencyCode);
   const [direction, setDirection] = usePersisted<Direction>("direction", "pi_to_fiat", isDirection);
-  const gcvDefault = config?.gcvDefaultUsd ?? GCV_DEFAULT_FALLBACK;
-  const [gcvRef, setGcvRef] = usePersisted("gcvRef", GCV_DEFAULT_FALLBACK, isReference);
   const [amount, setAmount] = useState("100");
+  const lastConverter = useRef<Route>("marche");
+  if (route === "marche") lastConverter.current = route;
 
-  const lastConverter = useRef<"marche" | "gcv">("marche");
-  if (route === "marche" || route === "gcv") lastConverter.current = route;
+  // Première page : bienvenue + connexion. Rien d'autre tant que l'utilisateur n'est pas connecté.
+  if (!auth.user) {
+    return (
+      <div className="shell">
+        <WelcomePage busy={auth.busy} error={auth.error} onLogin={() => void auth.login()} />
+      </div>
+    );
+  }
 
-  const isConverter = route === "marche" || route === "gcv";
-  const mode = route === "gcv" ? "gcv" : "market";
-  const health = healthOf(lastConverter.current === "gcv" ? "gcv" : "market", status, statusLoading, online);
-
-  const title = route === "devises" ? "Choisir une devise" : route === "reglages" ? "Réglages" : "";
+  const piValueAvailable = config?.piValueAvailable ?? false;
+  const health = healthOf(piValueAvailable, status, statusLoading, online);
+  const isConverter = route === "marche";
+  const title = route === "devises" ? "Choisir une devise" : "Réglages";
 
   return (
     <div className="shell">
@@ -51,28 +56,17 @@ export default function App() {
           <Brand />
           <div className="row gap-s">
             {config?.env === "testnet" && <span className="env-tag">Testnet</span>}
-            <StatusPill health={health} mode={lastConverter.current === "gcv" ? "gcv" : "market"} />
+            <StatusPill health={health} />
           </div>
         </div>
-
         {isConverter ? (
-          <nav className="mode-tabs" aria-label="Mode de conversion">
-            <button type="button" aria-current={route === "marche" ? "page" : undefined} onClick={() => navigate("marche")}>
-              MARCHÉ
-            </button>
-            <button
-              type="button"
-              className="gcv"
-              aria-current={route === "gcv" ? "page" : undefined}
-              onClick={() => navigate("gcv")}
-            >
-              GCV
-            </button>
-          </nav>
+          <div className="page-head">
+            <h1>Convertisseur</h1>
+          </div>
         ) : (
           <div className="page-head">
             {route === "devises" && (
-              <button type="button" className="back" onClick={() => navigate(lastConverter.current)} aria-label="Retour">
+              <button type="button" className="back" onClick={() => navigate("marche")} aria-label="Retour">
                 <IconBack />
               </button>
             )}
@@ -84,7 +78,7 @@ export default function App() {
       <main className={`content ${isConverter ? "overlap" : ""}`}>
         {isConverter && (
           <ConverterPage
-            mode={mode}
+            piValueAvailable={piValueAvailable}
             amount={amount}
             onAmount={setAmount}
             direction={direction}
@@ -92,10 +86,7 @@ export default function App() {
             currency={currency}
             currencies={currencies}
             onPickCurrency={() => navigate("devises")}
-            gcvRef={gcvRef}
-            gcvDefault={gcvDefault}
             online={online}
-            onUseGcv={() => navigate("gcv")}
           />
         )}
         {route === "devises" && (
@@ -106,7 +97,7 @@ export default function App() {
             selected={currency}
             onSelect={(code) => {
               setCurrency(code);
-              navigate(lastConverter.current);
+              navigate("marche");
             }}
           />
         )}
@@ -117,9 +108,8 @@ export default function App() {
             statusError={statusError}
             statusLoading={statusLoading}
             onRefreshStatus={refreshStatus}
-            gcvRef={gcvRef}
-            gcvDefault={gcvDefault}
-            onGcvRef={setGcvRef}
+            user={auth.user}
+            onLogout={auth.logout}
           />
         )}
       </main>

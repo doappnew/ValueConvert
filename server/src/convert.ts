@@ -8,7 +8,6 @@ const D = Decimal.clone({ precision: 50, rounding: Decimal.ROUND_HALF_UP });
 export const MAX_AMOUNT = new D("1000000000000"); // 1 000 milliards
 export const MIN_REFERENCE = new D("0.000001");
 export const MAX_REFERENCE = new D("1000000000000");
-export const DEFAULT_GCV_REFERENCE_USD = "314159";
 
 const AMOUNT_RE = /^\d{1,13}(\.\d{1,12})?$/;
 
@@ -23,18 +22,6 @@ export function parseAmount(raw: string): Decimal {
   }
   if (d.gt(MAX_AMOUNT)) {
     throw new AppError("INVALID_INPUT", "Montant trop grand (maximum 1 000 000 000 000).", 400);
-  }
-  return d;
-}
-
-/** Référence de prix GCV fournie par l'utilisateur (USD pour 1 Pi). */
-export function parseReference(raw: string): Decimal {
-  if (!/^\d{1,13}(\.\d{1,8})?$/.test(raw)) {
-    throw new AppError("INVALID_INPUT", "Référence GCV invalide : saisissez un nombre positif.", 400);
-  }
-  const d = new D(raw);
-  if (d.lt(MIN_REFERENCE) || d.gt(MAX_REFERENCE)) {
-    throw new AppError("INVALID_INPUT", "Référence GCV hors limites raisonnables.", 400);
   }
   return d;
 }

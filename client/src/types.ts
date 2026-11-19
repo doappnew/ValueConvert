@@ -1,6 +1,5 @@
-export type Mode = "market" | "gcv";
 export type Direction = "pi_to_fiat" | "fiat_to_pi";
-export type Route = "marche" | "gcv" | "devises" | "reglages";
+export type Route = "marche" | "devises" | "reglages";
 
 export interface Currency {
   code: string;
@@ -18,7 +17,6 @@ export interface SourceInfo {
 }
 
 export interface ConvertResponse {
-  mode: Mode;
   direction: Direction;
   amount: string;
   currency: Currency;
@@ -27,29 +25,27 @@ export interface ConvertResponse {
   priceUsd: string;
   usdToFiat: string;
   unitPriceFiat: string;
-  gcvReferenceUsd: string | null;
   sources: { price: SourceInfo | null; fx: SourceInfo | null };
   dataState: "live" | "stale";
-  kind: "market_estimate" | "gcv_reference";
   disclaimer: string;
 }
 
 export interface StatusResponse {
   env: string;
-  price: SourceInfo;
+  /** null tant que la valeur du Pi n'est pas disponible. */
+  price: SourceInfo | null;
   fx: SourceInfo;
 }
 
 export interface AppConfig {
   appName: string;
   env: "testnet" | "mainnet";
-  gcvDefaultUsd: string;
+  piValueAvailable: boolean;
+  piSandbox: boolean;
 }
 
 export interface ConvertParams {
-  mode: Mode;
   direction: Direction;
   amount: string;
   currency: string;
-  gcvReference?: string;
 }

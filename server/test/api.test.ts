@@ -15,7 +15,7 @@ function setup(opts: {
   env?: Record<string, string>;
   fetchFn?: typeof fetch;
 } = {}) {
-  const config = loadConfig({ APP_ENV: "testnet", CLIENT_DIST: "/nonexistent", ...opts.env });
+  const config = loadConfig({ APP_ENV: "testnet", PI_VALUE_AVAILABLE: "1", CLIENT_DIST: "/nonexistent", ...opts.env });
   const price = new CachedSource<PriceQuote>({
     name: "CoinGecko",
     ttlMs: 60_000,
@@ -45,11 +45,10 @@ const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
 
 describe("GET /api/convert — mode marché", () => {
   it("Pi → XOF fonctionne", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "100", currency: "XOF" })}`);
+    const res = await request(setup()).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "100", currency: "XOF" })}`);
     expect(res.status).toBe(200);
     expect(res.body.result).toBe("12000"); // 100 × 0,2 × 600
     expect(res.body.currency.code).toBe("XOF");
-    expect(res.body.kind).toBe("market_estimate");
     expect(res.body.dataState).toBe("live");
     expect(res.body.sources.price.name).toBe("CoinGecko");
     expect(res.body.sources.fx.attribution.text).toBe("Rates By Exchange Rate API");
@@ -58,71 +57,36 @@ describe("GET /api/convert — mode marché", () => {
   });
 
   it("XOF → Pi utilise les mêmes références", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "fiat_to_pi", amount: "12000", currency: "XOF" })}`);
+    const res = await request(setup()).get(`/api/convert?${q({ direction: "fiat_to_pi", amount: "12000", currency: "XOF" })}`);
     expect(res.status).toBe(200);
     expect(res.body.result).toBe("100.0000000");
   });
 
   it("USD n'a pas besoin de la source de taux", async () => {
     const fx = vi.fn().mockRejectedValue(new Error("panne"));
-    const res = await request(setup({ fx })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "10", currency: "USD" })}`);
+    const res = await request(setup({ fx })).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "10", currency: "USD" })}`);
     expect(res.status).toBe(200);
     expect(res.body.result).toBe("2.00");
     expect(res.body.sources.fx).toBeNull();
   });
 
   it("arrondit selon les décimales de la devise (TND : 3)", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1.2345", currency: "tnd" })}`);
+    const res = await request(setup()).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "1.2345", currency: "tnd" })}`);
     expect(res.status).toBe(200);
     expect(res.body.result).toBe("0.741"); // 1,2345 × 0,2 × 3 = 0,7407
   });
 });
 
-describe("GET /api/convert — mode GCV", () => {
-  it("utilise 314159 USD par défaut, distinct du marché", async () => {
-    const app = setup();
-    const gcv = await request(app).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "USD" })}`);
-    const mkt = await request(app).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "USD" })}`);
-    expect(gcv.body.result).toBe("314159.00");
-    expect(gcv.body.kind).toBe("gcv_reference");
-    expect(gcv.body.sources.price).toBeNull();
-    expect(gcv.body.gcvReferenceUsd).toBe("314159");
-    expect(gcv.body.disclaimer).toMatch(/hypothétique/);
-    expect(mkt.body.result).toBe("0.20");
-    expect(gcv.body.result).not.toBe(mkt.body.result);
-  });
-
-  it("accepte une référence modifiée", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "2", currency: "XOF", gcvReference: "1000" })}`);
-    expect(res.status).toBe(200);
-    expect(res.body.result).toBe("1200000");
-    expect(res.body.gcvReferenceUsd).toBe("1000");
-  });
-
-  it("fonctionne même si CoinGecko est indisponible (aucun prix de marché utilisé)", async () => {
-    const price = vi.fn().mockRejectedValue(new Error("panne"));
-    const res = await request(setup({ price })).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
-    expect(res.status).toBe(200);
-    expect(price).not.toHaveBeenCalled();
-  });
-
-  it("refuse une référence invalide", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "USD", gcvReference: "-5" })}`);
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("INVALID_INPUT");
-  });
-});
-
 describe("erreurs et indisponibilités", () => {
   it("devise non prise en charge → message clair", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XYZ" })}`);
+    const res = await request(setup()).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "1", currency: "XYZ" })}`);
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("UNSUPPORTED_CURRENCY");
     expect(res.body.error.message).toMatch(/non prise en charge/);
   });
 
   it("devise absente de la source de taux → 422", async () => {
-    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "NGN" })}`);
+    const res = await request(setup()).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "1", currency: "NGN" })}`);
     expect(res.status).toBe(422);
     expect(res.body.error.code).toBe("CURRENCY_UNAVAILABLE");
     expect(res.body.result).toBeUndefined();
@@ -130,7 +94,7 @@ describe("erreurs et indisponibilités", () => {
 
   it("prix indisponible → 503 sans aucun prix inventé", async () => {
     const price = vi.fn().mockRejectedValue(new Error("panne"));
-    const res = await request(setup({ price })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
+    const res = await request(setup({ price })).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe("PRICE_UNAVAILABLE");
     expect(JSON.stringify(res.body)).not.toMatch(/priceUsd|result"/);
@@ -138,7 +102,7 @@ describe("erreurs et indisponibilités", () => {
 
   it("taux indisponibles → 503", async () => {
     const fx = vi.fn().mockRejectedValue(new Error("panne"));
-    const res = await request(setup({ fx })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
+    const res = await request(setup({ fx })).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
     expect(res.status).toBe(503);
     expect(res.body.error.code).toBe("RATES_UNAVAILABLE");
   });
@@ -148,11 +112,10 @@ describe("erreurs et indisponibilités", () => {
     ["montant texte", { amount: "abc" }],
     ["montant zéro", { amount: "0" }],
     ["montant énorme", { amount: "99999999999999999" }],
-    ["mode invalide", { mode: "autre" }],
     ["sens invalide", { direction: "sideways" }],
     ["devise mal formée", { currency: "XO" }],
   ])("entrée invalide : %s → 400", async (_l, patch) => {
-    const params = { mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF", ...patch };
+    const params = { direction: "pi_to_fiat", amount: "1", currency: "XOF", ...patch };
     const res = await request(setup()).get(`/api/convert?${q(params)}`);
     expect(res.status).toBe(400);
     expect(res.body.error.code).toMatch(/INVALID_INPUT|UNSUPPORTED_CURRENCY/);
@@ -166,7 +129,7 @@ describe("erreurs et indisponibilités", () => {
   it("signale les données périmées (stale) quand CoinGecko tombe après un succès", async () => {
     let calls = 0;
     let now = NOW;
-    const config = loadConfig({ CLIENT_DIST: "/nonexistent" });
+    const config = loadConfig({ CLIENT_DIST: "/nonexistent", PI_VALUE_AVAILABLE: "1" });
     const price = new CachedSource<PriceQuote>({
       name: "CoinGecko",
       ttlMs: 60_000,
@@ -188,7 +151,7 @@ describe("erreurs et indisponibilités", () => {
       fetcher: async () => ({ value: { rates: { XOF: "600" } }, sourceTime: now }),
     });
     const app = createApp({ config, market: createMarketService({ price, fx, envName: "testnet" }) });
-    const url = `/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`;
+    const url = `/api/convert?${q({ direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`;
     expect((await request(app).get(url)).body.dataState).toBe("live");
     now += 120_000;
     const res = await request(app).get(url);
@@ -219,9 +182,9 @@ describe("autres routes", () => {
     expect(res.body.env).toBe("testnet");
   });
 
-  it("/api/config expose l'environnement et la référence GCV par défaut", async () => {
+  it("/api/config expose l'environnement et la disponibilité de la valeur du Pi", async () => {
     const res = await request(setup({ env: { APP_ENV: "mainnet" } })).get("/api/config");
-    expect(res.body).toEqual({ appName: "ValueConvert", env: "mainnet", gcvDefaultUsd: "314159" });
+    expect(res.body).toEqual({ appName: "ValueConvert", env: "mainnet", piValueAvailable: true, piSandbox: false });
   });
 
   it("route inconnue → 404 JSON", async () => {
@@ -298,5 +261,20 @@ describe("POST /api/pi/verify", () => {
     fetchFn.mockResolvedValueOnce(new Response(JSON.stringify({ nope: true }), { status: 200 }));
     const b = await request(app).post("/api/pi/verify").send({ accessToken: "token-token-token" });
     expect(b.status).toBe(502);
+  });
+});
+
+describe("valeur du Pi à venir (PI_VALUE_AVAILABLE=0, par défaut)", () => {
+  it("ne calcule rien et n'interroge aucune source de prix", async () => {
+    const price = vi.fn().mockResolvedValue({ value: { priceUsd: "0.2" }, sourceTime: NOW });
+    const app = setup({ price, env: { PI_VALUE_AVAILABLE: "0" } });
+    const res = await request(app).get(`/api/convert?${q({ direction: "pi_to_fiat", amount: "100", currency: "XOF" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: false, message: expect.stringMatching(/à venir/) });
+    expect(JSON.stringify(res.body)).not.toMatch(/314159|result|priceUsd/);
+    const st = await request(app).get("/api/status");
+    expect(st.body.price).toBeNull();
+    expect(price).not.toHaveBeenCalled();
+    expect((await request(app).get("/api/config")).body.piValueAvailable).toBe(false);
   });
 });

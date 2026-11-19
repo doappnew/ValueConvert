@@ -13,13 +13,13 @@ export class ApiError extends Error {
 
 const TIMEOUT_MS = 12_000;
 
-async function request<T>(path: string, init: RequestInit = {}, outer?: AbortSignal): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, outer?: AbortSignal, timeoutMs = TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, TIMEOUT_MS);
+  }, timeoutMs);
   const onAbort = () => controller.abort();
   outer?.addEventListener("abort", onAbort);
 
@@ -54,18 +54,33 @@ async function request<T>(path: string, init: RequestInit = {}, outer?: AbortSig
   }
 }
 
+const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+const jsonHeaders = (token: string) => ({ ...bearer(token), "content-type": "application/json" });
+
+export interface TestStatus {
+  send: { enabled: boolean; amount: number };
+  receive: { enabled: boolean; amount: number };
+}
+
 export const api = {
+  testStatus: (signal?: AbortSignal) => request<TestStatus>("/api/test/status", {}, signal),
+  testMe: (token: string) => request<{ sendDone: boolean; receiveDone: boolean }>("/api/test/me", { headers: bearer(token) }),
+  // L'envoi A2U attend la confirmation de la blockchain : délai plus long.
+  testSend: (token: string) =>
+    request<{ ok: true; amount: number; txid: string }>("/api/test/send", { method: "POST", headers: bearer(token) }, undefined, 90_000),
+  receiveApprove: (token: string, paymentId: string) =>
+    request<{ ok: true }>("/api/test/receive/approve", { method: "POST", headers: jsonHeaders(token), body: JSON.stringify({ paymentId }) }),
+  receiveComplete: (token: string, paymentId: string, txid: string) =>
+    request<{ ok: true }>("/api/test/receive/complete", { method: "POST", headers: jsonHeaders(token), body: JSON.stringify({ paymentId, txid }) }),
   config: (signal?: AbortSignal) => request<AppConfig>("/api/config", {}, signal),
   currencies: (signal?: AbortSignal) => request<{ currencies: Currency[] }>("/api/currencies", {}, signal),
   status: (signal?: AbortSignal) => request<StatusResponse>("/api/status", {}, signal),
   convert: (p: ConvertParams, signal?: AbortSignal) => {
     const qs = new URLSearchParams({
-      mode: p.mode,
       direction: p.direction,
       amount: p.amount,
       currency: p.currency,
     });
-    if (p.mode === "gcv" && p.gcvReference) qs.set("gcvReference", p.gcvReference);
     return request<ConvertResponse>(`/api/convert?${qs.toString()}`, {}, signal);
   },
   piVerify: (accessToken: string) =>

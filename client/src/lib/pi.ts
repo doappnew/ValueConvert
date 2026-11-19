@@ -22,12 +22,24 @@ declare global {
 }
 
 let initialized = false;
+let sandbox = false;
+
+/** À appeler avant la première connexion : le mode bac à sable vient de la configuration du serveur. */
+export function setPiSandbox(value: boolean): void {
+  sandbox = value;
+}
+
+/** Informations non secrètes pour diagnostiquer une connexion qui échoue. */
+export function piDiagnostics(): string {
+  const sdk = typeof window !== "undefined" && window.Pi ? "oui" : "non";
+  return `origine ${window.location.origin} · SDK ${sdk} · sandbox ${sandbox ? "oui" : "non"}`;
+}
 
 export function getPi(): PiSdk | null {
   if (typeof window === "undefined" || !window.Pi) return null;
   if (!initialized) {
     try {
-      window.Pi.init({ version: "2.0" });
+      window.Pi.init(sandbox ? { version: "2.0", sandbox: true } : { version: "2.0" });
       initialized = true;
     } catch {
       return null;
@@ -37,7 +49,8 @@ export function getPi(): PiSdk | null {
 }
 
 export function isPiBrowser(): boolean {
-  return getPi() !== null || /PiBrowser/i.test(navigator.userAgent);
+  // Ne déclenche pas Pi.init : la configuration (sandbox) n'est pas encore connue à l'affichage.
+  return (typeof window !== "undefined" && !!window.Pi) || /PiBrowser/i.test(navigator.userAgent);
 }
 
 /**
@@ -50,4 +63,45 @@ export async function piAuthenticate(): Promise<string> {
   // Pas de paiements dans cette version : rien à reprendre si un paiement incomplet est signalé.
   const auth = await pi.authenticate(["username"], () => undefined);
   return auth.accessToken;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tests Testnet exigés par la core team (envoi A2U / réception U2A).
+ * Les autorisations sont demandées au moment du clic, pas seulement à la connexion.
+ * ------------------------------------------------------------------ */
+
+interface PiPaymentCallbacks {
+  onReadyForServerApproval(paymentId: string): void;
+  onReadyForServerCompletion(paymentId: string, txid: string): void;
+  onCancel(paymentId: string): void;
+  onError(error: Error, payment?: unknown): void;
+}
+
+interface PiPaymentSdk {
+  authenticate(scopes: string[], onIncompletePaymentFound: (payment: unknown) => void): Promise<PiAuthResult>;
+  createPayment(data: { amount: number; memo: string; metadata: object }, callbacks: PiPaymentCallbacks): void;
+}
+
+export type IncompletePayment = { identifier?: string; transaction?: { txid?: string } | null };
+
+export async function piAuthenticateWith(scopes: string[], onIncomplete: (p: IncompletePayment) => void): Promise<string> {
+  const pi = getPi() as unknown as PiPaymentSdk | null;
+  if (!pi) throw new Error("PI_UNAVAILABLE");
+  const auth = await pi.authenticate(scopes, (p) => onIncomplete((p ?? {}) as IncompletePayment));
+  return auth.accessToken;
+}
+
+/** Lance un paiement utilisateur → application ; les montants et vérifications restent côté serveur. */
+export function piCreatePayment(
+  data: { amount: number; memo: string; metadata: object },
+  cb: { approve(id: string): Promise<void>; complete(id: string, txid: string): Promise<void>; cancel(): void; error(e: Error): void },
+): void {
+  const pi = getPi() as unknown as PiPaymentSdk | null;
+  if (!pi) throw new Error("PI_UNAVAILABLE");
+  pi.createPayment(data, {
+    onReadyForServerApproval: (id) => void cb.approve(id).catch((e: unknown) => cb.error(e instanceof Error ? e : new Error("approve"))),
+    onReadyForServerCompletion: (id, txid) => void cb.complete(id, txid).catch((e: unknown) => cb.error(e instanceof Error ? e : new Error("complete"))),
+    onCancel: () => cb.cancel(),
+    onError: (e) => cb.error(e),
+  });
 }
