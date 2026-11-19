@@ -56,14 +56,14 @@ export function isPiBrowser(): boolean {
 }
 
 /**
- * Demande l'authentification Pi avec la seule permission « username » et renvoie le jeton d'accès,
+ * Demande l'authentification Pi avec « username » et « payments » (réglage de la documentation et des apps Pi qui fonctionnent) et renvoie le jeton d'accès,
  * à transmettre UNIQUEMENT au serveur (qui le vérifie auprès de la Platform API).
  */
 export async function piAuthenticate(): Promise<string> {
   const pi = getPi();
   if (!pi) throw new Error("PI_UNAVAILABLE");
   // Pas de paiements dans cette version : rien à reprendre si un paiement incomplet est signalé.
-  const auth = await pi.authenticate(["username"], () => undefined);
+  const auth = await pi.authenticate(["username", "payments"], () => undefined);
   return auth.accessToken;
 }
 
