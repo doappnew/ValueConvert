@@ -36,10 +36,10 @@ export default function App() {
   if (route === "marche") lastConverter.current = route;
 
   // Première page : bienvenue + connexion. Rien d'autre tant que l'utilisateur n'est pas connecté.
-  if (!auth.user) {
+  if (!auth.user && !auth.guest) {
     return (
       <div className="shell">
-        <WelcomePage busy={auth.busy} error={auth.error} onLogin={() => void auth.login()} />
+        <WelcomePage busy={auth.busy} error={auth.error} onLogin={() => void auth.login()} onGuest={auth.continueAsGuest} />
       </div>
     );
   }
@@ -110,6 +110,9 @@ export default function App() {
             onRefreshStatus={refreshStatus}
             user={auth.user}
             onLogout={auth.logout}
+            onLogin={() => void auth.login()}
+            loginBusy={auth.busy}
+            loginError={auth.error}
           />
         )}
       </main>

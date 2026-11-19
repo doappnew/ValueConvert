@@ -24,7 +24,7 @@ function pay(over: Partial<PaymentDTO> = {}): PaymentDTO {
   };
 }
 
-function build(env: Record<string, string> = {}, opts: { network?: string; uid?: string; platform?: (url: string, init?: RequestInit) => unknown } = {}) {
+function build(env: Record<string, string> = {}, opts: { incomplete?: PaymentDTO[]; network?: string; uid?: string; platform?: (url: string, init?: RequestInit) => unknown } = {}) {
   const config = loadConfig({ ...ENV, APP_ENV: "testnet", ...env });
   const calls: string[] = [];
   const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -36,19 +36,21 @@ function build(env: Record<string, string> = {}, opts: { network?: string; uid?:
     const r = opts.platform?.(u, init);
     return Response.json(r ?? {});
   }) as unknown as typeof fetch;
+  const cancelled: string[] = [];
   const a2u: A2uClient & { created: unknown[] } = {
     created: [],
     async createPayment(a) { this.created.push(a); return "A2UPAYMENT123456"; },
     async getPayment() { return pay({ identifier: "A2UPAYMENT123456", direction: "app_to_user", network: opts.network ?? "Pi Testnet" }); },
     async submitPayment() { return "TX1234567890ABCDEF"; },
     async completePayment() { return pay(); },
-    async cancelPayment() { return pay(); },
+    async cancelPayment() { cancelled.push("x"); return pay(); },
+    async getIncompleteServerPayments() { return opts.incomplete ?? []; },
   };
   const price = new CachedSource({ name: "CoinGecko", ttlMs: 1, maxStaleMs: 1, sourceMaxAgeMs: 1, fetcher: async () => ({ value: { priceUsd: "1" }, sourceTime: null }) });
   const fx = new CachedSource({ name: "fx", ttlMs: 1, maxStaleMs: 1, sourceMaxAgeMs: 1, fetcher: async () => ({ value: { rates: { USD: "1" } }, sourceTime: null }) });
   const store = new TestStore(null);
   const app = createApp({ config, market: createMarketService({ price, fx, envName: config.APP_ENV }), fetchFn, makeA2u: async () => a2u, testStore: store });
-  return { app, a2u, calls, store, config };
+  return { app, a2u, calls, store, config, cancelled };
 }
 const auth = { Authorization: `Bearer ${TOKEN}` };
 
@@ -102,6 +104,32 @@ describe("test d'envoi A2U", () => {
     const r = await request(app).post("/api/test/send").set(auth);
     expect(r.status).toBe(409);
     expect(store.get("send", "u1")).toBeUndefined();
+  });
+  it("reprend un envoi interrompu sans transaction : annule puis renvoie", async () => {
+    const stuck = pay({ identifier: "STUCKPAYMENT1234", direction: "app_to_user", metadata: { purpose: "testnet-a2u" } });
+    const { app, a2u, cancelled, store } = build({}, { incomplete: [stuck] });
+    store.set("send", "u1", { paymentId: "STUCKPAYMENT1234", status: "incomplete", at: "" });
+    const r = await request(app).post("/api/test/send").set(auth);
+    expect(r.status).toBe(200);
+    expect(cancelled).toHaveLength(1);
+    expect(a2u.created).toHaveLength(1);
+    expect(store.get("send", "u1")?.status).toBe("done");
+  });
+  it("termine un envoi déjà passé sur la blockchain sans en créer un second", async () => {
+    const sent = pay({ identifier: "SENTPAYMENT12345", direction: "app_to_user", metadata: { purpose: "testnet-a2u" }, transaction: { txid: "TX1234567890ABCDEF", verified: true } });
+    const { app, a2u, store } = build({}, { incomplete: [sent] });
+    store.set("send", "u1", { paymentId: "SENTPAYMENT12345", status: "incomplete", at: "" });
+    const r = await request(app).post("/api/test/send").set(auth);
+    expect(r.status).toBe(200);
+    expect(r.body.recovered).toBe(true);
+    expect(a2u.created).toHaveLength(0);
+    expect(store.get("send", "u1")?.status).toBe("done");
+  });
+  it("ne touche pas aux paiements d'un autre compte", async () => {
+    const other = pay({ identifier: "OTHERPAYMENT1234", user_uid: "autre", direction: "app_to_user", metadata: { purpose: "testnet-a2u" } });
+    const { app, cancelled } = build({}, { incomplete: [other] });
+    expect((await request(app).post("/api/test/send").set(auth)).status).toBe(200);
+    expect(cancelled).toHaveLength(0);
   });
   it("ne fuit aucune clé dans la réponse", async () => {
     const { app } = build();

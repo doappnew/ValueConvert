@@ -107,3 +107,4 @@ svg{flex-shrink:0}
 .hero:not(.with-tabs){padding-bottom:22px}
 .hero.with-tabs{padding-bottom:58px}
 .legal-link{color:#fff;font-weight:600}
+.linkish{background:transparent;border:0;color:#fff;text-decoration:underline;font-weight:600;min-height:44px;padding:0 12px}

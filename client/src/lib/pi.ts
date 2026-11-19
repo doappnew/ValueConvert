@@ -32,7 +32,8 @@ export function setPiSandbox(value: boolean): void {
 /** Informations non secrètes pour diagnostiquer une connexion qui échoue. */
 export function piDiagnostics(): string {
   const sdk = typeof window !== "undefined" && window.Pi ? "oui" : "non";
-  return `origine ${window.location.origin} · SDK ${sdk} · sandbox ${sandbox ? "oui" : "non"}`;
+  const ua = navigator.userAgent;
+  return `origine ${window.location.origin} · SDK ${sdk} · sandbox ${sandbox ? "oui" : "non"} · Pi Browser ${/PiBrowser/i.test(ua) ? "oui" : "non"} · UA ${ua.slice(0, 90)}`;
 }
 
 export function getPi(): PiSdk | null {
@@ -50,7 +51,8 @@ export function getPi(): PiSdk | null {
 
 export function isPiBrowser(): boolean {
   // Ne déclenche pas Pi.init : la configuration (sandbox) n'est pas encore connue à l'affichage.
-  return (typeof window !== "undefined" && !!window.Pi) || /PiBrowser/i.test(navigator.userAgent);
+  // Le script du SDK définit window.Pi dans N'IMPORTE QUEL navigateur : sa présence ne prouve pas Pi Browser.
+  return typeof navigator !== "undefined" && /PiBrowser/i.test(navigator.userAgent);
 }
 
 /**

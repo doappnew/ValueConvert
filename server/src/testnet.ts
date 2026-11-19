@@ -31,6 +31,7 @@ export interface A2uClient {
   completePayment(id: string, txid: string): Promise<PaymentDTO>;
   getPayment(id: string): Promise<PaymentDTO>;
   cancelPayment(id: string): Promise<PaymentDTO>;
+  getIncompleteServerPayments(): Promise<PaymentDTO[] | { incomplete_server_payments?: PaymentDTO[] }>;
 }
 
 export type Kind = "send" | "receive";
@@ -164,6 +165,34 @@ export function createTestnetRouter(deps: TestnetDeps): Router {
     if (!ok) throw new AppError("NOT_FOUND", "Ce test n'est pas disponible.", 404);
   };
 
+  /**
+   * Paiements A2U restés incomplets pour ce compte : terminés s'ils ont une transaction, annulés sinon.
+   * Retourne « completed » si l'utilisateur a en fait déjà reçu ses Pi de test.
+   */
+  async function recoverIncomplete(a2u: A2uClient, uid: string): Promise<"completed" | "none"> {
+    let list: PaymentDTO[] = [];
+    try {
+      const raw = await a2u.getIncompleteServerPayments();
+      list = Array.isArray(raw) ? raw : (raw?.incomplete_server_payments ?? []);
+    } catch {
+      return "none";
+    }
+    let completed = false;
+    for (const p of list) {
+      if (p.user_uid !== uid || p.metadata?.purpose !== "testnet-a2u") continue;
+      if (p.network && p.network !== TESTNET_NETWORK) continue;
+      if (p.transaction?.txid && !p.status.developer_completed) {
+        await a2u.completePayment(p.identifier, p.transaction.txid);
+        completed = true;
+        console.log("[payout] paiement interrompu terminé");
+      } else if (!p.status.developer_completed && !p.status.cancelled) {
+        await a2u.cancelPayment(p.identifier).catch(() => undefined);
+        console.log("[payout] paiement interrompu annulé");
+      }
+    }
+    return completed ? "completed" : "none";
+  }
+
   /** Test d'envoi A2U : montant fixé par le serveur, une seule fois par compte, réseau Testnet vérifié. */
   r.post("/send", deps.limiter, async (req, res, next) => {
     let uid = "";
@@ -171,14 +200,24 @@ export function createTestnetRouter(deps: TestnetDeps): Router {
     try {
       need(flags.send && !!makeA2u);
       uid = (await authUser(req)).uid;
-      if (store.get("send", uid)) throw new AppError("INVALID_INPUT", "Ce compte a déjà reçu son paiement de test.", 409);
-      if (store.count("send") >= config.TEST_SEND_MAX_ACCOUNTS) {
-        throw new AppError("INVALID_INPUT", "Le nombre maximal de comptes de test est atteint.", 409);
+      const prior = store.get("send", uid);
+      if (prior?.status === "done") throw new AppError("INVALID_INPUT", "Ce compte a déjà reçu son paiement de test.", 409);
+      if (!prior) {
+        if (store.count("send") >= config.TEST_SEND_MAX_ACCOUNTS) {
+          throw new AppError("INVALID_INPUT", "Le nombre maximal de comptes de test est atteint.", 409);
+        }
+        store.set("send", uid, { paymentId: null, status: "pending", at: new Date().toISOString() }); // réservation anti-doublon
+        reserved = true;
       }
-      store.set("send", uid, { paymentId: null, status: "pending", at: new Date().toISOString() }); // réservation anti-doublon
-      reserved = true;
 
       const a2u = await makeA2u!(config.PI_API_KEY!, config.PI_WALLET_SEED!);
+      // Reprise : un envoi interrompu avant la fin ne doit pas bloquer le compte.
+      if ((await recoverIncomplete(a2u, uid)) === "completed") {
+        store.set("send", uid, { paymentId: prior?.paymentId ?? null, status: "done", at: new Date().toISOString() });
+        console.log("[payout] terminé (reprise d'un envoi interrompu)");
+        res.json({ ok: true, amount: flags.sendAmount, recovered: true });
+        return;
+      }
       const paymentId = await a2u.createPayment({ amount: flags.sendAmount, memo: "ValueConvert — test Testnet (envoi)", metadata: { purpose: "testnet-a2u" }, uid });
       store.set("send", uid, { paymentId, status: "pending", at: new Date().toISOString() });
 

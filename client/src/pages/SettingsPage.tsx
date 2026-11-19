@@ -13,6 +13,9 @@ interface Props {
   onRefreshStatus: () => void;
   user: string | null;
   onLogout: () => void;
+  onLogin: () => void;
+  loginBusy: boolean;
+  loginError: string | null;
 }
 
 function SourceCard({ title, info, now }: { title: string; info: SourceInfo; now: number }) {
@@ -90,10 +93,21 @@ export function SettingsPage(p: Props) {
 
       <section className="card">
         <h2>Compte</h2>
-        <p className="hint">{p.user ? `Connecté en tant que ${p.user}.` : "Non connecté."}</p>
-        <button type="button" className="btn ghost" onClick={p.onLogout}>
-          Se déconnecter
-        </button>
+        <p className="hint">{p.user ? `Connecté en tant que ${p.user}.` : "Vous utilisez l'application sans être connecté."}</p>
+        {p.user ? (
+          <button type="button" className="btn ghost" onClick={p.onLogout}>
+            Se déconnecter
+          </button>
+        ) : (
+          <button type="button" className="btn" onClick={p.onLogin} disabled={p.loginBusy}>
+            {p.loginBusy ? "Connexion…" : "Se connecter avec Pi"}
+          </button>
+        )}
+        {p.loginError && !p.user && (
+          <p className="notice error-notice" role="alert">
+            {p.loginError}
+          </p>
+        )}
       </section>
 
       <SendTest status={tests} />
