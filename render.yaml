@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: valueconvert-testnet
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: testnet
+      - key: PI_VALIDATION_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false

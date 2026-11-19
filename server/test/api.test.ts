@@ -1,0 +1,302 @@
+import request from "supertest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "../src/app.js";
+import { CachedSource } from "../src/cache.js";
+import { loadConfig } from "../src/config.js";
+import { createMarketService } from "../src/market.js";
+import type { PriceQuote } from "../src/providers/coingecko.js";
+import type { FxTable } from "../src/providers/fxrates.js";
+
+const NOW = Date.parse("2026-11-19T12:00:00Z");
+
+function setup(opts: {
+  price?: () => Promise<{ value: PriceQuote; sourceTime: number | null }>;
+  fx?: () => Promise<{ value: FxTable; sourceTime: number | null }>;
+  env?: Record<string, string>;
+  fetchFn?: typeof fetch;
+} = {}) {
+  const config = loadConfig({ APP_ENV: "testnet", CLIENT_DIST: "/nonexistent", ...opts.env });
+  const price = new CachedSource<PriceQuote>({
+    name: "CoinGecko",
+    ttlMs: 60_000,
+    maxStaleMs: 900_000,
+    sourceMaxAgeMs: 1_800_000,
+    now: () => NOW,
+    fetcher: opts.price ?? (async () => ({ value: { priceUsd: "0.2" }, sourceTime: NOW - 30_000 })),
+  });
+  const fx = new CachedSource<FxTable>({
+    name: "ExchangeRate-API",
+    ttlMs: 3_600_000,
+    maxStaleMs: 172_800_000,
+    sourceMaxAgeMs: 129_600_000,
+    now: () => NOW,
+    fetcher:
+      opts.fx ??
+      (async () => ({
+        value: { rates: { USD: "1", XOF: "600", EUR: "0.9", TND: "3" } },
+        sourceTime: NOW - 3_600_000,
+      })),
+  });
+  const market = createMarketService({ price, fx, envName: config.APP_ENV });
+  return createApp({ config, market, ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}) });
+}
+
+const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
+
+describe("GET /api/convert — mode marché", () => {
+  it("Pi → XOF fonctionne", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "100", currency: "XOF" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe("12000"); // 100 × 0,2 × 600
+    expect(res.body.currency.code).toBe("XOF");
+    expect(res.body.kind).toBe("market_estimate");
+    expect(res.body.dataState).toBe("live");
+    expect(res.body.sources.price.name).toBe("CoinGecko");
+    expect(res.body.sources.fx.attribution.text).toBe("Rates By Exchange Rate API");
+    expect(res.body.priceUsd).toBe("0.2");
+    expect(res.body.usdToFiat).toBe("600");
+  });
+
+  it("XOF → Pi utilise les mêmes références", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "fiat_to_pi", amount: "12000", currency: "XOF" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe("100.0000000");
+  });
+
+  it("USD n'a pas besoin de la source de taux", async () => {
+    const fx = vi.fn().mockRejectedValue(new Error("panne"));
+    const res = await request(setup({ fx })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "10", currency: "USD" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe("2.00");
+    expect(res.body.sources.fx).toBeNull();
+  });
+
+  it("arrondit selon les décimales de la devise (TND : 3)", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1.2345", currency: "tnd" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe("0.741"); // 1,2345 × 0,2 × 3 = 0,7407
+  });
+});
+
+describe("GET /api/convert — mode GCV", () => {
+  it("utilise 314159 USD par défaut, distinct du marché", async () => {
+    const app = setup();
+    const gcv = await request(app).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "USD" })}`);
+    const mkt = await request(app).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "USD" })}`);
+    expect(gcv.body.result).toBe("314159.00");
+    expect(gcv.body.kind).toBe("gcv_reference");
+    expect(gcv.body.sources.price).toBeNull();
+    expect(gcv.body.gcvReferenceUsd).toBe("314159");
+    expect(gcv.body.disclaimer).toMatch(/hypothétique/);
+    expect(mkt.body.result).toBe("0.20");
+    expect(gcv.body.result).not.toBe(mkt.body.result);
+  });
+
+  it("accepte une référence modifiée", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "2", currency: "XOF", gcvReference: "1000" })}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBe("1200000");
+    expect(res.body.gcvReferenceUsd).toBe("1000");
+  });
+
+  it("fonctionne même si CoinGecko est indisponible (aucun prix de marché utilisé)", async () => {
+    const price = vi.fn().mockRejectedValue(new Error("panne"));
+    const res = await request(setup({ price })).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
+    expect(res.status).toBe(200);
+    expect(price).not.toHaveBeenCalled();
+  });
+
+  it("refuse une référence invalide", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "gcv", direction: "pi_to_fiat", amount: "1", currency: "USD", gcvReference: "-5" })}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_INPUT");
+  });
+});
+
+describe("erreurs et indisponibilités", () => {
+  it("devise non prise en charge → message clair", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XYZ" })}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("UNSUPPORTED_CURRENCY");
+    expect(res.body.error.message).toMatch(/non prise en charge/);
+  });
+
+  it("devise absente de la source de taux → 422", async () => {
+    const res = await request(setup()).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "NGN" })}`);
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe("CURRENCY_UNAVAILABLE");
+    expect(res.body.result).toBeUndefined();
+  });
+
+  it("prix indisponible → 503 sans aucun prix inventé", async () => {
+    const price = vi.fn().mockRejectedValue(new Error("panne"));
+    const res = await request(setup({ price })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe("PRICE_UNAVAILABLE");
+    expect(JSON.stringify(res.body)).not.toMatch(/priceUsd|result"/);
+  });
+
+  it("taux indisponibles → 503", async () => {
+    const fx = vi.fn().mockRejectedValue(new Error("panne"));
+    const res = await request(setup({ fx })).get(`/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`);
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe("RATES_UNAVAILABLE");
+  });
+
+  it.each([
+    ["montant négatif", { amount: "-1" }],
+    ["montant texte", { amount: "abc" }],
+    ["montant zéro", { amount: "0" }],
+    ["montant énorme", { amount: "99999999999999999" }],
+    ["mode invalide", { mode: "autre" }],
+    ["sens invalide", { direction: "sideways" }],
+    ["devise mal formée", { currency: "XO" }],
+  ])("entrée invalide : %s → 400", async (_l, patch) => {
+    const params = { mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF", ...patch };
+    const res = await request(setup()).get(`/api/convert?${q(params)}`);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toMatch(/INVALID_INPUT|UNSUPPORTED_CURRENCY/);
+  });
+
+  it("paramètres manquants → 400", async () => {
+    const res = await request(setup()).get("/api/convert");
+    expect(res.status).toBe(400);
+  });
+
+  it("signale les données périmées (stale) quand CoinGecko tombe après un succès", async () => {
+    let calls = 0;
+    let now = NOW;
+    const config = loadConfig({ CLIENT_DIST: "/nonexistent" });
+    const price = new CachedSource<PriceQuote>({
+      name: "CoinGecko",
+      ttlMs: 60_000,
+      maxStaleMs: 900_000,
+      sourceMaxAgeMs: 1_800_000,
+      now: () => now,
+      fetcher: async () => {
+        calls++;
+        if (calls > 1) throw new Error("panne");
+        return { value: { priceUsd: "0.2" }, sourceTime: now };
+      },
+    });
+    const fx = new CachedSource<FxTable>({
+      name: "fx",
+      ttlMs: 3_600_000,
+      maxStaleMs: 172_800_000,
+      sourceMaxAgeMs: 129_600_000,
+      now: () => now,
+      fetcher: async () => ({ value: { rates: { XOF: "600" } }, sourceTime: now }),
+    });
+    const app = createApp({ config, market: createMarketService({ price, fx, envName: "testnet" }) });
+    const url = `/api/convert?${q({ mode: "market", direction: "pi_to_fiat", amount: "1", currency: "XOF" })}`;
+    expect((await request(app).get(url)).body.dataState).toBe("live");
+    now += 120_000;
+    const res = await request(app).get(url);
+    expect(res.status).toBe(200);
+    expect(res.body.dataState).toBe("stale");
+    expect(res.body.sources.price.state).toBe("stale");
+    now += 1_000_000;
+    expect((await request(app).get(url)).status).toBe(503);
+  });
+});
+
+describe("autres routes", () => {
+  it("/api/currencies liste au moins 25 devises, SLE et non SLL", async () => {
+    const res = await request(setup()).get("/api/currencies");
+    const codes = res.body.currencies.map((c: { code: string }) => c.code);
+    expect(codes.length).toBeGreaterThanOrEqual(25);
+    expect(codes).toContain("XOF");
+    expect(codes).toContain("SLE");
+    expect(codes).not.toContain("SLL");
+  });
+
+  it("/api/status indique l'état des deux sources, même en panne", async () => {
+    const price = vi.fn().mockRejectedValue(new Error("panne"));
+    const res = await request(setup({ price })).get("/api/status");
+    expect(res.status).toBe(200);
+    expect(res.body.price.state).toBe("unavailable");
+    expect(res.body.fx.state).toBe("live");
+    expect(res.body.env).toBe("testnet");
+  });
+
+  it("/api/config expose l'environnement et la référence GCV par défaut", async () => {
+    const res = await request(setup({ env: { APP_ENV: "mainnet" } })).get("/api/config");
+    expect(res.body).toEqual({ appName: "ValueConvert", env: "mainnet", gcvDefaultUsd: "314159" });
+  });
+
+  it("route inconnue → 404 JSON", async () => {
+    const res = await request(setup()).get("/api/nope");
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("NOT_FOUND");
+  });
+
+  it("/validation-key.txt renvoie la clé configurée, sinon 404", async () => {
+    const withKey = await request(setup({ env: { PI_VALIDATION_KEY: "abc123" } })).get("/validation-key.txt");
+    expect(withKey.status).toBe(200);
+    expect(withKey.text).toBe("abc123");
+    const without = await request(setup()).get("/validation-key.txt");
+    expect(without.status).toBe(404);
+  });
+
+  it("en-têtes de sécurité présents, sans X-Powered-By", async () => {
+    const res = await request(setup()).get("/api/health");
+    expect(res.headers["x-powered-by"]).toBeUndefined();
+    expect(res.headers["content-security-policy"]).toContain("script-src 'self' https://sdk.minepi.com");
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+    expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("limite les requêtes (429)", async () => {
+    const app = setup({ env: { RATE_LIMIT_PER_MINUTE: "3" } });
+    const codes: number[] = [];
+    for (let i = 0; i < 5; i++) codes.push((await request(app).get("/api/health")).status);
+    expect(codes.slice(0, 3)).toEqual([200, 200, 200]);
+    expect(codes).toContain(429);
+  });
+});
+
+describe("POST /api/pi/verify", () => {
+  let fetchFn: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchFn = vi.fn();
+  });
+
+  it("vérifie le jeton avec /v2/me et ne renvoie que le nom d'utilisateur", async () => {
+    fetchFn.mockResolvedValue(new Response(JSON.stringify({ uid: "u-1", username: "alice", secret: "x" }), { status: 200 }));
+    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
+      .post("/api/pi/verify")
+      .send({ accessToken: "token-token-token" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ username: "alice" });
+    const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.minepi.com/v2/me");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token-token-token");
+  });
+
+  it("refuse un jeton rejeté par Pi (401)", async () => {
+    fetchFn.mockResolvedValue(new Response("{}", { status: 401 }));
+    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
+      .post("/api/pi/verify")
+      .send({ accessToken: "mauvais-jeton-xx" });
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("refuse un corps invalide sans appeler Pi", async () => {
+    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
+      .post("/api/pi/verify")
+      .send({ accessToken: "x" });
+    expect(res.status).toBe(400);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("répond 502 si Pi est injoignable ou renvoie un format inattendu", async () => {
+    fetchFn.mockRejectedValueOnce(new Error("réseau"));
+    const app = setup({ fetchFn: fetchFn as unknown as typeof fetch });
+    const a = await request(app).post("/api/pi/verify").send({ accessToken: "token-token-token" });
+    expect(a.status).toBe(502);
+    fetchFn.mockResolvedValueOnce(new Response(JSON.stringify({ nope: true }), { status: 200 }));
+    const b = await request(app).post("/api/pi/verify").send({ accessToken: "token-token-token" });
+    expect(b.status).toBe(502);
+  });
+});
