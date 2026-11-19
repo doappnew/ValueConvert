@@ -63,7 +63,7 @@ export async function piAuthenticate(): Promise<string> {
   const pi = getPi();
   if (!pi) throw new Error("PI_UNAVAILABLE");
   // Pas de paiements dans cette version : rien à reprendre si un paiement incomplet est signalé.
-  const auth = await pi.authenticate(["username", "payments"], () => undefined);
+  const auth = await pi.authenticate(["username"], () => undefined);
   return auth.accessToken;
 }
 

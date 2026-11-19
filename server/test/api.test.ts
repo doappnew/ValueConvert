@@ -224,16 +224,17 @@ describe("POST /api/pi/verify", () => {
     fetchFn = vi.fn();
   });
 
-  it("vérifie le jeton avec /v2/me et ne renvoie que le nom d'utilisateur", async () => {
-    fetchFn.mockResolvedValue(new Response(JSON.stringify({ uid: "u-1", username: "alice", secret: "x" }), { status: 200 }));
+  it("échange le jeton avec App Studio et ne renvoie que le nom d'utilisateur", async () => {
+    fetchFn.mockResolvedValue(new Response(JSON.stringify({ sessionToken: "s", user: { uid: "u-1", username: "alice" }, secret: "x" }), { status: 200 }));
     const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
       .post("/api/pi/verify")
       .send({ accessToken: "token-token-token" });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ username: "alice" });
     const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://api.minepi.com/v2/me");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token-token-token");
+    expect(url).toBe("https://backend.appstudio-u7cm9zhmha0ruwv8.piappengine.com/pi/auth/v1/login");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ accessToken: "token-token-token" });
   });
 
   it("refuse un jeton rejeté par Pi (401)", async () => {
