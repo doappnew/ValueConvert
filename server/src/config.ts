@@ -59,6 +59,16 @@ const schema = z.object({
   TEST_MAX_AMOUNT: z.coerce.number().positive().max(20).default(20),
   /** Nombre maximal de comptes distincts recevant un paiement de test. */
   TEST_SEND_MAX_ACCOUNTS: z.coerce.number().int().min(1).max(50).default(5),
+  /**
+   * Pass payant (paiement utilisateur → application, montant fixé par le serveur en Pi).
+   * Fermé par défaut. Exige PI_API_KEY, SUPABASE_URL et SUPABASE_SERVICE_KEY (variables de l'hébergeur uniquement).
+   * Mainnet : ne l'activer que lorsque le service livre réellement ce que le pass donne.
+   */
+  PASS_ENABLED: z.enum(["0", "1"]).default("0"),
+  PASS_PRICE_PI: z.coerce.number().positive().max(20).default(0.5),
+  PASS_DAYS: z.coerce.number().int().min(1).max(366).default(30),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_KEY: z.string().min(20).optional(),
   TEST_STATE_FILE: z.string().default("./data/test-state.json"),
 });
 

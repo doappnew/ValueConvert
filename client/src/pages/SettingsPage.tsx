@@ -3,6 +3,7 @@ import { useNow } from "../hooks/useMisc";
 import type { ApiError } from "../lib/api";
 import { formatWhen } from "../lib/format";
 import { BUILD_ID, SendTest, useTestStatus } from "../components/TestnetTests";
+import { PassCard } from "../components/PassCard";
 import type { AppConfig, SourceInfo, StatusResponse } from "../types";
 
 interface Props {
@@ -109,6 +110,8 @@ export function SettingsPage(p: Props) {
           </p>
         )}
       </section>
+
+      <PassCard />
 
       <SendTest status={tests} />
 

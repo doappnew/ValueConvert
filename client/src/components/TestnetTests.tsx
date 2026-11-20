@@ -3,7 +3,7 @@ import { ApiError, api, type TestStatus } from "../lib/api";
 import { piAuthenticateWith, piCreatePayment, type IncompletePayment } from "../lib/pi";
 
 /** Version affichée pour savoir quelle page est réellement chargée dans Pi Browser. */
-export const BUILD_ID = "1.4.3-testnet · connexion directe Pi (/v2/me)";
+export const BUILD_ID = "1.5.0-testnet · pass 30 jours";
 
 export function useTestStatus(): TestStatus | null {
   const [s, setS] = useState<TestStatus | null>(null);

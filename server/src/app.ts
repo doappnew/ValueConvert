@@ -9,6 +9,7 @@ import type { Config } from "./config.js";
 import { AppError } from "./errors.js";
 import { CURRENCIES } from "./currencies.js";
 import type { MarketService } from "./market.js";
+import { createPassRouter, SupabasePassStore, MemoryPassStore, type PassStore } from "./pass.js";
 import { createTestnetRouter, makePiBackendA2u, TestStore, type A2uClient } from "./testnet.js";
 
 export interface AppDeps {
@@ -18,6 +19,7 @@ export interface AppDeps {
   /** Pour les tests : remplace pi-backend et le stockage des tests Testnet. */
   makeA2u?: (apiKey: string, seed: string) => Promise<A2uClient>;
   testStore?: TestStore;
+  passStore?: PassStore;
 }
 
 const convertQuery = z.object({
@@ -33,7 +35,7 @@ function firstIssue(e: z.ZodError): string {
   return e.issues[0]?.message ?? "Requête invalide.";
 }
 
-export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBackendA2u, testStore }: AppDeps) {
+export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBackendA2u, testStore, passStore }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", config.TRUST_PROXY);
@@ -164,6 +166,18 @@ export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBac
       next(e);
     }
   });
+
+  api.use(
+    "/pass",
+    createPassRouter({
+      config,
+      fetchFn,
+      limiter: strictLimiter,
+      store:
+        passStore ??
+        (config.SUPABASE_URL && config.SUPABASE_SERVICE_KEY ? new SupabasePassStore(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY, fetchFn) : new MemoryPassStore()),
+    }),
+  );
 
   api.use(
     "/test",

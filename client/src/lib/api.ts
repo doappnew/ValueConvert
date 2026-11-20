@@ -62,7 +62,25 @@ export interface TestStatus {
   receive: { enabled: boolean; amount: number };
 }
 
+export interface PassStatus {
+  enabled: boolean;
+  price: number;
+  days: number;
+  active?: boolean;
+  expiresAt?: string | null;
+}
+
 export const api = {
+  passStatus: (token?: string, signal?: AbortSignal) =>
+    request<PassStatus>("/api/pass/status", token ? { headers: bearer(token) } : {}, signal),
+  passApprove: (token: string, paymentId: string) =>
+    request<{ ok: true }>("/api/pass/approve", { method: "POST", headers: jsonHeaders(token), body: JSON.stringify({ paymentId }) }),
+  passComplete: (token: string, paymentId: string, txid: string) =>
+    request<{ ok: true; active: boolean; expiresAt: string | null }>("/api/pass/complete", {
+      method: "POST",
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ paymentId, txid }),
+    }),
   testStatus: (signal?: AbortSignal) => request<TestStatus>("/api/test/status", {}, signal),
   testMe: (token: string) => request<{ sendDone: boolean; receiveDone: boolean }>("/api/test/me", { headers: bearer(token) }),
   // L'envoi A2U attend la confirmation de la blockchain : délai plus long.
