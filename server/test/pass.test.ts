@@ -67,7 +67,7 @@ describe("pass payant", () => {
 
   it("désactivé (drapeau ou clé manquante) → routes 404", async () => {
     for (const env of [{ PASS_ENABLED: "0" }, { SUPABASE_SERVICE_KEY: "" }]) {
-      const c = build({ env: env as Record<string, string> });
+      const c = build({ env: env as unknown as Record<string, string> });
       expect((await request(c.app).post("/pass/approve").set(auth).send({ paymentId: PID })).status).toBe(404);
     }
   });
