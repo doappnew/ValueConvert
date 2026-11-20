@@ -37,7 +37,6 @@ const schema = z.object({
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(90),
   TRUST_PROXY: z.coerce.number().int().min(0).default(1),
 
-  PI_APPSTUDIO_LOGIN_URL: z.string().url().default("https://backend.appstudio-u7cm9zhmha0ruwv8.piappengine.com/pi/auth/v1/login"),
   PI_API_BASE: z.string().url().default("https://api.minepi.com"),
   /** Contenu du fichier /validation-key.txt fourni par le Developer Portal (vérification du domaine). */
   PI_VALIDATION_KEY: z.string().min(1).optional(),

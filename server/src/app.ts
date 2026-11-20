@@ -27,7 +27,7 @@ const convertQuery = z.object({
 });
 
 const piVerifyBody = z.object({ accessToken: z.string().min(10).max(4096) });
-const piLoginSchema = z.object({ sessionToken: z.string().optional(), user: z.object({ uid: z.string().min(1), username: z.string().min(1).optional() }) });
+const piMeSchema = z.object({ uid: z.string().min(1), username: z.string().min(1).optional() });
 
 function firstIssue(e: z.ZodError): string {
   return e.issues[0]?.message ?? "Requête invalide.";
@@ -132,7 +132,7 @@ export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBac
 
   /**
    * Connexion Pi facultative : le navigateur n'envoie QUE le jeton d'accès ; l'identité est
-   * échangé côté serveur avec App Studio (POST /pi/auth/v1/login), seule identité de confiance. Aucune clé API n'est nécessaire.
+   * vérifié côté serveur auprès de la Platform API (GET /v2/me). Aucune clé API n'est nécessaire.
    */
   api.post("/pi/verify", strictLimiter, express.json({ limit: "8kb" }), async (req, res, next) => {
     try {
@@ -140,28 +140,26 @@ export function createApp({ config, market, fetchFn = fetch, makeA2u = makePiBac
       if (!body.success) throw new AppError("INVALID_INPUT", "Jeton manquant ou invalide.", 400);
       let r: globalThis.Response;
       try {
-        r = await fetchFn(config.PI_APPSTUDIO_LOGIN_URL, {
-          method: "POST",
-          headers: { "content-type": "application/json", accept: "application/json" },
-          body: JSON.stringify({ accessToken: body.data.accessToken }),
+        r = await fetchFn(`${config.PI_API_BASE.replace(/\/+$/, "")}/v2/me`, {
+          headers: { Authorization: `Bearer ${body.data.accessToken}`, accept: "application/json" },
           signal: AbortSignal.timeout(8000),
         });
       } catch {
-        console.warn("[auth] App Studio injoignable");
+        console.warn("[auth] API Pi /v2/me injoignable");
         throw new AppError("UPSTREAM_ERROR", "Vérification Pi impossible pour le moment.", 502);
       }
-      if (r.status === 400 || r.status === 401 || r.status === 403) {
-        console.warn(`[auth] App Studio ${r.status} : jeton refusé`);
+      if (r.status === 401 || r.status === 403) {
+        console.warn(`[auth] API Pi /v2/me ${r.status} : jeton refusé`);
         throw new AppError("UNAUTHORIZED", "Jeton Pi refusé.", 401);
       }
       if (!r.ok) {
-        console.warn(`[auth] App Studio ${r.status}`);
+        console.warn(`[auth] API Pi /v2/me ${r.status}`);
         throw new AppError("UPSTREAM_ERROR", "Vérification Pi impossible pour le moment.", 502);
       }
-      const me = piLoginSchema.safeParse(await r.json().catch(() => null));
+      const me = piMeSchema.safeParse(await r.json().catch(() => null));
       if (!me.success) throw new AppError("UPSTREAM_ERROR", "Réponse Pi inattendue.", 502);
       console.log("[auth] connexion vérifiée");
-      res.json({ username: me.data.user.username ?? null });
+      res.json({ username: me.data.username ?? null });
     } catch (e) {
       next(e);
     }

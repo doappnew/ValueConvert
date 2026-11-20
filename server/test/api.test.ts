@@ -223,45 +223,59 @@ describe("POST /api/pi/verify", () => {
   beforeEach(() => {
     fetchFn = vi.fn();
   });
+  const post = (body: unknown = { accessToken: "token-token-token" }) =>
+    request(setup({ fetchFn: fetchFn as unknown as typeof fetch })).post("/api/pi/verify").send(body as object);
 
-  it("échange le jeton avec App Studio et ne renvoie que le nom d'utilisateur", async () => {
-    fetchFn.mockResolvedValue(new Response(JSON.stringify({ sessionToken: "s", user: { uid: "u-1", username: "alice" }, secret: "x" }), { status: 200 }));
-    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
-      .post("/api/pi/verify")
-      .send({ accessToken: "token-token-token" });
+  it("200 : vérifie le jeton avec GET /v2/me et ne renvoie que le nom d'utilisateur", async () => {
+    fetchFn.mockResolvedValue(new Response(JSON.stringify({ uid: "u-1", username: "alice", secret: "x" }), { status: 200 }));
+    const res = await post();
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ username: "alice" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
     const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://backend.appstudio-u7cm9zhmha0ruwv8.piappengine.com/pi/auth/v1/login");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(String(init.body))).toEqual({ accessToken: "token-token-token" });
+    expect(url).toBe("https://api.minepi.com/v2/me");
+    expect(init.method ?? "GET").toBe("GET");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token-token-token");
   });
 
-  it("refuse un jeton rejeté par Pi (401)", async () => {
+  it("401 : jeton refusé par Pi → « Jeton Pi refusé »", async () => {
     fetchFn.mockResolvedValue(new Response("{}", { status: 401 }));
-    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
-      .post("/api/pi/verify")
-      .send({ accessToken: "mauvais-jeton-xx" });
+    const res = await post({ accessToken: "mauvais-jeton-xx" });
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe("UNAUTHORIZED");
+    expect(res.body.error.message).toBe("Jeton Pi refusé.");
+  });
+
+  it("403 : jeton refusé par Pi", async () => {
+    fetchFn.mockResolvedValue(new Response("{}", { status: 403 }));
+    expect((await post()).status).toBe(401);
+  });
+
+  it("503 : erreur Pi → 502, sans aucun autre appel", async () => {
+    fetchFn.mockResolvedValue(new Response("{}", { status: 503 }));
+    const res = await post();
+    expect(res.status).toBe(502);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("n'envoie jamais le jeton à une autre adresse que api.minepi.com", async () => {
+    fetchFn.mockResolvedValue(new Response(JSON.stringify({ uid: "u-1", username: "alice" }), { status: 200 }));
+    await post();
+    for (const call of fetchFn.mock.calls as [string][]) expect(new URL(call[0]).hostname).toBe("api.minepi.com");
   });
 
   it("refuse un corps invalide sans appeler Pi", async () => {
-    const res = await request(setup({ fetchFn: fetchFn as unknown as typeof fetch }))
-      .post("/api/pi/verify")
-      .send({ accessToken: "x" });
+    const res = await post({ accessToken: "x" });
     expect(res.status).toBe(400);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
-  it("répond 502 si Pi est injoignable ou renvoie un format inattendu", async () => {
-    fetchFn.mockRejectedValueOnce(new Error("réseau"));
-    const app = setup({ fetchFn: fetchFn as unknown as typeof fetch });
-    const a = await request(app).post("/api/pi/verify").send({ accessToken: "token-token-token" });
-    expect(a.status).toBe(502);
-    fetchFn.mockResolvedValueOnce(new Response(JSON.stringify({ nope: true }), { status: 200 }));
-    const b = await request(app).post("/api/pi/verify").send({ accessToken: "token-token-token" });
-    expect(b.status).toBe(502);
+  it("502 si Pi est injoignable ou renvoie un format inattendu", async () => {
+    fetchFn.mockRejectedValue(new Error("réseau"));
+    expect((await post()).status).toBe(502);
+    fetchFn.mockReset();
+    fetchFn.mockResolvedValue(new Response(JSON.stringify({ nope: true }), { status: 200 }));
+    expect((await post()).status).toBe(502);
   });
 });
 
