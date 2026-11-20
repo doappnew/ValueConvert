@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { CachedSource } from "./cache.js";
 import { loadConfig } from "./config.js";
+import { startKeepAlive } from "./keepalive.js";
 import { createMarketService } from "./market.js";
 import { fetchPiPriceUsd } from "./providers/coingecko.js";
 import { fetchUsdRates } from "./providers/fxrates.js";
@@ -38,6 +39,8 @@ const app = createApp({ config, market });
 const server = app.listen(config.PORT, () => {
   console.log(`ValueConvert (${config.APP_ENV}) à l'écoute sur le port ${config.PORT}`);
 });
+
+startKeepAlive(process.env.RENDER_EXTERNAL_URL);
 
 function shutdown(signal: string) {
   console.log(`${signal} reçu, arrêt en cours…`);
